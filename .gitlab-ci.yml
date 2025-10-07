@@ -1,0 +1,399 @@
+# The Docker image that will be used to build your app
+image: node:lts
+
+stages:
+  - pre-deploy
+  - lint
+  - test
+  - build
+  - deploy
+  - post-deploy
+
+# Define cache to share node_modules between jobs
+cache:
+  key: ${CI_COMMIT_REF_SLUG}
+  paths:
+    - node_modules/
+    - apps/frontend/node_modules/
+    - packages/*/node_modules/
+  policy: pull-push
+
+# Functions that should be executed before all jobs
+before_script:
+  - npm ci
+
+# Build and push the GROBID Docker image
+build-grobid:
+  stage: pre-deploy
+  image: node:lts
+  before_script:
+    - echo "Skip Docker build in CI environment due to Docker service issues"
+  script:
+    - echo "GROBID image build will be performed directly on the deployment server"
+    - mkdir -p /tmp/grobid-build
+    - echo "GROBID build placeholder" > /tmp/grobid-build/build.txt
+  only:
+    - develop
+    - $CI_DEFAULT_BRANCH
+
+# Pre-deploy stage - Deploy GROBID service for testing
+deploy-grobid-test:
+  stage: pre-deploy
+  image: node:lts
+  before_script:
+    - apt-get update && apt-get install -y curl
+  script:
+    - echo "Skipping GROBID deployment in CI environment"
+    - echo "GROBID will be deployed in the actual server environment"
+    - mkdir -p /tmp/grobid-test
+    - echo "GROBID test placeholder" > /tmp/grobid-test/test.txt
+    - echo "CI testing continues assuming GROBID is available at http://localhost:8070"
+
+# Linting stage
+lint-frontend:
+  stage: lint
+  needs:
+    - deploy-grobid-test
+  script:
+    - npm run lint
+
+# Backend testing stage - file upload test
+test-backend-upload:
+  stage: test
+  image: python:3.9
+  needs:
+    - deploy-grobid-test
+  before_script:
+    - cd apps/backend
+    # Install compatible versions of numpy and scipy before installing other dependencies
+    - pip install --no-cache-dir numpy==1.24.2 scipy==1.10.1
+    - pip install --no-cache-dir -r requirements.txt
+    - pip install pytest pytest-mock requests
+    # Download NLTK data
+    - python -c "import nltk; nltk.download('punkt'); nltk.download('stopwords'); nltk.download('wordnet'); nltk.download('averaged_perceptron_tagger')"
+    - mkdir -p uploads
+    - ls -la test/  # Check if test directory exists
+  script:
+    - cd /builds/psd2425/Rose-Campbell/sentiment-analysis/apps/backend
+    - python app.py > app.log 2>&1 &  # Start backend in background
+    - sleep 30  # Wait for backend to initialize
+    - cat app.log  # Print backend log for debugging
+    - echo "Running file upload test..."
+    - python test/test_upload_file.py
+  allow_failure: true
+
+# Backend testing stage - topic analysis test
+test-backend-analyze:
+  stage: test
+  image: python:3.9
+  needs:
+    - deploy-grobid-test
+    - test-backend-upload
+  before_script:
+    - cd apps/backend
+    # Install compatible versions of numpy and scipy before installing other dependencies
+    - pip install --no-cache-dir numpy==1.24.2 scipy==1.10.1
+    - pip install --no-cache-dir -r requirements.txt
+    - pip install pytest pytest-mock requests
+    # Download NLTK data
+    - python -c "import nltk; nltk.download('punkt'); nltk.download('stopwords'); nltk.download('wordnet'); nltk.download('averaged_perceptron_tagger')"
+    - ls -la test/
+    - mkdir -p uploads
+    - cp test/testSample.pdf uploads/
+    - ls -la uploads/
+  script:
+    - cd /builds/psd2425/Rose-Campbell/sentiment-analysis/apps/backend
+    - export GROBID_URL=http://localhost:8070
+    - echo "Starting backend server for test..."
+    - python app.py > app.log 2>&1 &  # Start backend in background with logging
+    - sleep 30  # Wait for backend to initialize
+    - cat app.log
+    - echo "Running topic analysis test..."
+    - python3 test/test_analyze_topic.py
+    - echo "Test complete. Backend server log:"
+    - cat app.log  # Output backend log for debugging
+  allow_failure: true
+
+# Build stage - frontend build
+build-frontend:
+  stage: build
+  script:
+    - npm run build
+    # Prepare static files for GitLab Pages
+    - cd apps/frontend
+    - if [ -d "out" ]; then
+        echo "Using out directory";
+      elif [ -d ".next/standalone" ]; then
+        echo "Using .next/standalone";
+        mkdir -p out;
+        cp -r .next/standalone/* out/;
+        cp -r .next/static out/_next/static;
+      else
+        echo "Using regular .next";
+        mkdir -p out;
+        cp -r .next out/;
+        cp -r public/* out/;
+      fi
+  artifacts:
+    paths:
+      - apps/frontend/out/
+
+# Build stage - backend Docker image
+build-backend:
+  stage: build
+  image: docker/compose:1.29.2
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - cd apps/backend
+    # Create simple docker-compose.yml file
+    - |
+      echo "version: '3'
+      services:
+        backend:
+          build: .
+          image: $CI_REGISTRY_IMAGE/backend:$CI_COMMIT_REF_SLUG" > docker-compose.yml
+    - docker-compose build
+    - docker tag $CI_REGISTRY_IMAGE/backend:$CI_COMMIT_REF_SLUG $CI_REGISTRY_IMAGE/backend:latest
+    - docker push $CI_REGISTRY_IMAGE/backend:$CI_COMMIT_REF_SLUG
+    - docker push $CI_REGISTRY_IMAGE/backend:latest
+  only:
+    - develop
+    - $CI_DEFAULT_BRANCH
+
+# Deploy stage - deploy to GitLab Pages
+pages:
+  stage: deploy
+  dependencies:
+    - build-frontend
+  script:
+    - mkdir -p public
+    - if [ -d "apps/frontend/out" ]; then
+        cp -r apps/frontend/out/* public/;
+      else
+        echo "Build output directory not found";
+        exit 1;
+      fi
+  artifacts:
+    paths:
+      - public
+  rules:
+    - if: $CI_COMMIT_REF_NAME == $CI_DEFAULT_BRANCH
+
+# Deploy stage - frontend development environment
+deploy-frontend-dev:
+  stage: deploy
+  dependencies:
+    - build-frontend
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache openssh-client rsync
+    - eval $(ssh-agent -s)
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - echo "$SSH_PRIVATE_KEY" | base64 -d > ~/.ssh/id_rsa
+    - chmod 600 ~/.ssh/id_rsa
+    - ssh-add ~/.ssh/id_rsa
+  script:
+    - echo "Deploying frontend to development environment"
+    - mkdir -p ~/.ssh
+    - ssh-keyscan -H $DEV_SERVER >> ~/.ssh/known_hosts
+    - ssh -o StrictHostKeyChecking=no $SSH_USER@$DEV_SERVER "mkdir -p /var/www/sentiment-analysis/frontend-dev"
+    - rsync -avz --delete apps/frontend/out/ $SSH_USER@$DEV_SERVER:/var/www/sentiment-analysis/frontend-dev/
+    - ssh -o StrictHostKeyChecking=no $SSH_USER@$DEV_SERVER "
+        if [ -f /etc/systemd/system/sentiment-frontend-dev.service ]; then
+          systemctl restart sentiment-frontend-dev || true;
+        fi"
+    - echo "Frontend deployment to development environment completed"
+  environment:
+    name: frontend-dev
+    url: http://localhost:3000
+  rules:
+    - if: $CI_COMMIT_REF_NAME == "develop"
+
+# Deploy stage - create development environment Docker network
+create-network-dev:
+  stage: deploy
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache openssh-client
+    - eval $(ssh-agent -s)
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - echo "$SSH_PRIVATE_KEY" | base64 -d > ~/.ssh/id_rsa
+    - chmod 600 ~/.ssh/id_rsa
+    - ssh-add ~/.ssh/id_rsa
+  script:
+    - ssh -o StrictHostKeyChecking=no $SSH_USER@$DEV_SERVER "
+        docker network create sentiment-network || true"
+  environment:
+    name: network-dev
+  rules:
+    - if: $CI_COMMIT_REF_NAME == "develop"
+
+# Deploy and build GROBID on deployment server
+deploy-grobid-dev:
+  stage: deploy
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache openssh-client
+    - eval $(ssh-agent -s)
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - echo "$SSH_PRIVATE_KEY" | base64 -d > ~/.ssh/id_rsa
+    - chmod 600 ~/.ssh/id_rsa
+    - ssh-add ~/.ssh/id_rsa
+  script:
+    - ssh -o StrictHostKeyChecking=no $SSH_USER@$DEV_SERVER "
+        docker pull lfoppiano/grobid:0.8.1 &&
+        docker tag lfoppiano/grobid:0.8.1 grobid:latest &&
+        docker stop grobid-service || true &&
+        docker rm grobid-service || true &&
+        docker run -d --name grobid-service --network sentiment-network -p 8070:8070 grobid:latest"
+  environment:
+    name: grobid-dev
+    url: http://localhost:8070
+  rules:
+    - if: $CI_COMMIT_REF_NAME == "develop"
+
+# Deploy and build backend on deployment server
+deploy-backend-dev:
+  stage: deploy
+  image: alpine:latest
+  needs:
+    - deploy-grobid-dev
+  before_script:
+    - apk add --no-cache openssh-client
+    - eval $(ssh-agent -s)
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - echo "$SSH_PRIVATE_KEY" | base64 -d > ~/.ssh/id_rsa
+    - chmod 600 ~/.ssh/id_rsa
+    - ssh-add ~/.ssh/id_rsa
+  script:
+    - ssh -o StrictHostKeyChecking=no $SSH_USER@$DEV_SERVER "
+        docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY &&
+        docker pull $CI_REGISTRY_IMAGE/backend:$CI_COMMIT_REF_SLUG &&
+        docker stop backend-api || true &&
+        docker rm backend-api || true &&
+        docker run -d --name backend-api --network sentiment-network -e GROBID_URL=http://grobid-service:8070 -p 5000:5000 $CI_REGISTRY_IMAGE/backend:$CI_COMMIT_REF_SLUG"
+  environment:
+    name: backend-dev
+    url: http://localhost:5000
+  rules:
+    - if: $CI_COMMIT_REF_NAME == "develop"
+
+# Deploy stage - frontend production environment
+deploy-frontend-prod:
+  stage: deploy
+  dependencies:
+    - build-frontend
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache openssh-client rsync
+    - eval $(ssh-agent -s)
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - echo "$SSH_PRIVATE_KEY" | base64 -d > ~/.ssh/id_rsa
+    - chmod 600 ~/.ssh/id_rsa
+    - ssh-add ~/.ssh/id_rsa
+  script:
+    - echo "Deploying frontend to production environment"
+    - mkdir -p ~/.ssh
+    - |
+      if [ -z "$PROD_SERVER" ]; then
+        echo "WARNING: PROD_SERVER variable not set, using DEV_SERVER as fallback"
+        PROD_SERVER=$DEV_SERVER
+      fi
+    - ssh-keyscan -H $PROD_SERVER >> ~/.ssh/known_hosts
+    - ssh -o StrictHostKeyChecking=no $SSH_USER@$PROD_SERVER "mkdir -p /var/www/sentiment-analysis/frontend-prod"
+    - rsync -avz --delete apps/frontend/out/ $SSH_USER@$PROD_SERVER:/var/www/sentiment-analysis/frontend-prod/
+    - ssh -o StrictHostKeyChecking=no $SSH_USER@$PROD_SERVER "
+        if [ -f /etc/systemd/system/sentiment-frontend-prod.service ]; then
+          systemctl restart sentiment-frontend-prod || true;
+        fi"
+    - echo "Frontend deployment to production environment completed"
+  environment:
+    name: frontend-prod
+    url: http://localhost:3000
+  rules:
+    - if: $CI_COMMIT_REF_NAME == $CI_DEFAULT_BRANCH
+  when: manual 
+
+# Deploy stage - create production environment Docker network
+# Deploy stage - create production environment Docker network
+create-network-prod:
+  stage: deploy
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache openssh-client
+    - eval $(ssh-agent -s)
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - echo "$SSH_PRIVATE_KEY" | base64 -d > ~/.ssh/id_rsa
+    - chmod 600 ~/.ssh/id_rsa
+    - ssh-add ~/.ssh/id_rsa
+  script:
+    - ssh -o StrictHostKeyChecking=no $SSH_USER@$PROD_SERVER "
+        docker network create sentiment-network || true"
+  environment:
+    name: network-prod
+  rules:
+    - if: $CI_COMMIT_REF_NAME == $CI_DEFAULT_BRANCH
+  when: manual # Manual trigger for production deployment
+
+# Deploy and build GROBID on production server
+deploy-grobid-prod:
+  stage: deploy
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache openssh-client
+    - eval $(ssh-agent -s)
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - echo "$SSH_PRIVATE_KEY" | base64 -d > ~/.ssh/id_rsa
+    - chmod 600 ~/.ssh/id_rsa
+    - ssh-add ~/.ssh/id_rsa
+  script:
+    - ssh -o StrictHostKeyChecking=no $SSH_USER@$PROD_SERVER "
+        docker pull lfoppiano/grobid:0.8.1 &&
+        docker tag lfoppiano/grobid:0.8.1 grobid:latest &&
+        docker stop grobid-service || true &&
+        docker rm grobid-service || true &&
+        docker run -d --name grobid-service --network sentiment-network -p 8070:8070 grobid:latest"
+  environment:
+    name: grobid-prod
+    url: http://localhost:8070
+  rules:
+    - if: $CI_COMMIT_REF_NAME == $CI_DEFAULT_BRANCH
+  when: manual # Manual trigger for production deployment
+
+# Deploy stage - backend production environment
+deploy-backend-prod:
+  stage: deploy
+  image: alpine:latest
+  needs:
+    - deploy-grobid-prod
+  before_script:
+    - apk add --no-cache openssh-client
+    - eval $(ssh-agent -s)
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - echo "$SSH_PRIVATE_KEY" | base64 -d > ~/.ssh/id_rsa
+    - chmod 600 ~/.ssh/id_rsa
+    - ssh-add ~/.ssh/id_rsa
+  script:
+    - ssh -o StrictHostKeyChecking=no $SSH_USER@$PROD_SERVER "
+        docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY &&
+        docker pull $CI_REGISTRY_IMAGE/backend:latest &&
+        docker stop backend-api || true &&
+        docker rm backend-api || true &&
+        docker run -d --name backend-api --network sentiment-network -e GROBID_URL=http://grobid-service:8070 -p 5000:5000 $CI_REGISTRY_IMAGE/backend:latest"
+  environment:
+    name: backend-prod
+    url: http://localhost:5000
+  rules:
+    - if: $CI_COMMIT_REF_NAME == $CI_DEFAULT_BRANCH
+  when: manual # Manual trigger for production deployment

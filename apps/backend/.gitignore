@@ -1,0 +1,5 @@
+.env.example
+/uploads
+/testing
+/__pycache__
+/logs
