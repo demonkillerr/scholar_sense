@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-config
+  namespace: scholarsense
+data:
+  FLASK_ENV: "production"
+  DEBUG: "False"
+  PORT: "5000"
+  GROBID_URL: "http://grobid:8070"
+  UPLOAD_FOLDER: "/app/uploads"
+  VECTOR_STORE_PATH: "/app/chroma_db"
+  EMBEDDING_MODEL: "BAAI/bge-large-en-v1.5"
