@@ -44,3 +44,8 @@ apps/backend/venv
 apps/frontend/uploads
 apps/backend/uploads
 uploads
+
+# Markdowns
+idea.md
+SETUP_GUIDE.md
+TRANSFORMATION_SUMMARY.md
