@@ -82,7 +82,7 @@ class GrobidClient:
             tei_content: TEI XML content
         
         Returns:
-            Parsed text content dictionary
+            Parsed text content dictionary with sections
         """
         try:
             # Register TEI namespace
@@ -95,13 +95,56 @@ class GrobidClient:
             title_elem = root.find('.//tei:titleStmt/tei:title', ns)
             title = title_elem.text if title_elem is not None else ""
             
+            # Extract authors
+            author_elems = root.findall('.//tei:fileDesc/tei:sourceDesc//tei:author/tei:persName', ns)
+            authors = []
+            for author in author_elems:
+                forename = author.find('.//tei:forename', ns)
+                surname = author.find('.//tei:surname', ns)
+                name_parts = []
+                if forename is not None and forename.text:
+                    name_parts.append(forename.text)
+                if surname is not None and surname.text:
+                    name_parts.append(surname.text)
+                if name_parts:
+                    authors.append(' '.join(name_parts))
+            authors_str = ', '.join(authors) if authors else ''
+            
             # Extract abstract
             abstract_elems = root.findall('.//tei:profileDesc/tei:abstract//tei:p', ns)
-            abstract = ' '.join([elem.text for elem in abstract_elems if elem.text]) if abstract_elems else ""
+            abstract = ' '.join([self._get_element_text(elem) for elem in abstract_elems if elem is not None])
             
-            # Extract body paragraphs
-            body_elems = root.findall('.//tei:body//tei:p', ns)
-            body_text = ' '.join([elem.text for elem in body_elems if elem.text]) if body_elems else ""
+            # Extract sections from body
+            sections = []
+            body = root.find('.//tei:body', ns)
+            if body is not None:
+                divs = body.findall('.//tei:div', ns)
+                for div in divs:
+                    # Get section heading
+                    head_elem = div.find('.//tei:head', ns)
+                    heading = self._get_element_text(head_elem) if head_elem is not None else 'Body'
+                    
+                    # Get all paragraphs in this section
+                    p_elems = div.findall('.//tei:p', ns)
+                    section_text = ' '.join([self._get_element_text(p) for p in p_elems if p is not None])
+                    
+                    if section_text:
+                        sections.append({
+                            'heading': heading,
+                            'text': section_text,
+                            'page': 'N/A'  # GROBID doesn't always provide page numbers
+                        })
+            
+            # If no sections found, use all body text as one section
+            if not sections:
+                body_elems = root.findall('.//tei:body//tei:p', ns)
+                body_text = ' '.join([self._get_element_text(elem) for elem in body_elems if elem is not None])
+                if body_text:
+                    sections.append({
+                        'heading': 'Body',
+                        'text': body_text,
+                        'page': 'N/A'
+                    })
             
             # Extract references
             ref_elems = root.findall('.//tei:listBibl/tei:biblStruct', ns)
@@ -113,21 +156,51 @@ class GrobidClient:
             
             return {
                 'title': title,
+                'authors': authors_str,
                 'abstract': abstract,
-                'body_text': body_text,
+                'sections': sections,
                 'references': references,
-                'full_text': f"{title} {abstract} {body_text}"
+                'body_text': ' '.join([s['text'] for s in sections]),  # Keep for backward compatibility
+                'full_text': f"{title} {abstract} {' '.join([s['text'] for s in sections])}"
             }
             
         except Exception as e:
             logger.error(f"Error parsing TEI response: {e}")
             return {
                 'title': "",
+                'authors': "",
                 'abstract': "",
+                'sections': [],
                 'body_text': "",
                 'references': [],
                 'full_text': ""
             }
+    
+    def _get_element_text(self, element):
+        """
+        Extract all text from an element and its children
+        
+        Parameters:
+            element: XML element
+        
+        Returns:
+            Combined text content
+        """
+        if element is None:
+            return ""
+        
+        text_parts = []
+        if element.text:
+            text_parts.append(element.text)
+        
+        for child in element:
+            child_text = self._get_element_text(child)
+            if child_text:
+                text_parts.append(child_text)
+            if child.tail:
+                text_parts.append(child.tail)
+        
+        return ' '.join(text_parts)
 
 # Test code
 if __name__ == "__main__":

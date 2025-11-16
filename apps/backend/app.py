@@ -2,22 +2,21 @@
 # -*- coding: utf-8 -*-
 
 """
-Sentiment Analysis Backend API
-Flask application providing sentiment analysis services
+ScholarSense Backend API
+Flask application providing RAG-powered academic paper Q&A
 """
 
 import os
 import json
 import logging
-import tempfile
 from pathlib import Path
 from datetime import datetime
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
+
 from document_processor import DocumentProcessor
-from sentiment_analyzer import SentimentAnalyzer
-from text_processor import TextProcessor
+from rag_engine import RAGEngine
 from logging_config import setup_logging
 import sys
 
@@ -47,8 +46,8 @@ CORS(app)  # Enable CORS for all routes
 
 # Configure upload settings
 UPLOAD_FOLDER = os.environ.get('UPLOAD_FOLDER', 'uploads')
-ALLOWED_EXTENSIONS = {'pdf', 'txt', 'text', 'json'}
-MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB
+ALLOWED_EXTENSIONS = {'pdf'}  # Only PDF for academic papers
+MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB for academic papers
 
 # Ensure upload directory exists
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -59,8 +58,26 @@ app.config['MAX_CONTENT_LENGTH'] = MAX_CONTENT_LENGTH
 
 # Initialize processors
 document_processor = DocumentProcessor()
-sentiment_analyzer = SentimentAnalyzer()
-text_processor = TextProcessor()
+
+# Initialize RAG engine (lazy loaded)
+_rag_engine = None
+
+def get_rag_engine():
+    """Get or create RAG engine instance"""
+    global _rag_engine
+    if _rag_engine is None:
+        try:
+            logger.info("Initializing RAG engine...")
+            _rag_engine = RAGEngine(
+                vector_store_path=os.environ.get('VECTOR_STORE_PATH', './chroma_db'),
+                embedding_model=os.environ.get('EMBEDDING_MODEL', 'BAAI/bge-large-en-v1.5'),
+                llm_api_key=os.environ.get('GEMINI_API_KEY')
+            )
+            logger.info("RAG engine initialized successfully")
+        except Exception as e:
+            logger.error(f"Error initializing RAG engine: {e}")
+            raise
+    return _rag_engine
 
 def allowed_file(filename):
     """Check if file has an allowed extension"""
@@ -73,10 +90,19 @@ def status():
         # Check services
         services = document_processor.check_services()
         
+        # Try to get RAG stats if initialized
+        rag_stats = None
+        try:
+            rag = get_rag_engine()
+            rag_stats = rag.get_stats()
+        except Exception as e:
+            logger.warning(f"Could not get RAG stats: {e}")
+        
         return jsonify({
             'status': 'ok',
             'timestamp': datetime.now().isoformat(),
-            'services': services
+            'services': services,
+            'rag_stats': rag_stats
         })
     except Exception as e:
         logger.error(f"Error checking status: {e}")
@@ -86,133 +112,49 @@ def status():
             'timestamp': datetime.now().isoformat()
         }), 500
 
-@app.route('/analyse', methods=['POST'])
-def analyze_text():
-    """API endpoint to analyze text sentiment or process files"""
+@app.route('/query', methods=['POST'])
+def query_papers():
+    """API endpoint to query papers using RAG"""
     try:
-        # Get request data
         data = request.get_json()
-        logger.info(f"Received data: {data}")
         
-        if not data:
+        if not data or 'query' not in data:
             return jsonify({
                 'status': 'error',
-                'error': 'No data provided'
+                'error': 'No query provided'
             }), 400
         
-        # Check if topic and file_path are provided
-        if 'topic' in data and 'file_path' in data:
-            topic = data.get('topic')
-            file_path = data.get('file_path')
-            full_path = os.path.join(app.config['UPLOAD_FOLDER'], file_path)
-            
-            # Check if file exists
-            if not os.path.exists(full_path):
-                return jsonify({
-                    'status': 'error',
-                    'error': f'File not found: {file_path}'
-                }), 404
-            
-            # Process file with topic
-            result = document_processor.process_file_with_topic(full_path, topic)
-            
-            return jsonify({
-                'status': 'ok',
-                'result': result
-            })
+        query = data.get('query')
+        paper_ids = data.get('paper_ids')  # Optional: limit to specific papers
+        n_results = data.get('n_results', 5)
         
-        # Check if topic is provided
-        elif 'topic' in data:
-            topic = data.get('topic')
-            logger.info(f"Analyzing sentiment for topic: {topic}")
-            
-            # Search for topic-related content in our database or generate sample text
-            topic_text = text_processor.generate_topic_text(topic)
-            
-            if not topic_text:
-                return jsonify({
-                    'status': 'error',
-                    'error': f'Could not generate content for topic: {topic}'
-                }), 404
-            
-            # Analyze sentiment for the topic-related text
-            sentiment_result = sentiment_analyzer.analyze_text(topic_text)
-            
-            # Extract keywords from the topic text
-            keywords = text_processor.extract_keywords(topic_text)
-            
-            return jsonify({
-                'status': 'ok',
-                'result': {
-                    'topic': topic,
-                    'sentiment': sentiment_result,
-                    'keywords': [{"word": word, "count": count} for word, count in keywords],
-                    'sample_text': topic_text[:200] + '...' if len(topic_text) > 200 else topic_text
-                }
-            })
+        logger.info(f"Processing query: {query}")
         
-        # Check if file_path is provided
-        elif 'file_path' in data:
-            file_path = data.get('file_path')
-            # Construct full path
-            full_path = os.path.join(app.config['UPLOAD_FOLDER'], file_path)
-            
-            # Check if file exists
-            if not os.path.exists(full_path):
-                return jsonify({
-                    'status': 'error',
-                    'error': f'File not found: {file_path}'
-                }), 404
-                
-            # Process file
-            result = document_processor.process_file(full_path)
-            
-            return jsonify({
-                'status': 'ok',
-                'result': result
-            })
+        # Get RAG engine
+        rag = get_rag_engine()
         
-        # Check if text is provided
-        elif 'text' in data:
-            text = data.get('text', '')
-            title = data.get('title')
-            method = data.get('method', 'combined')
-            
-            if not text:
-                return jsonify({
-                    'status': 'error',
-                    'error': 'Empty text provided'
-                }), 400
-            
-            # Process text
-            if data.get('full_analysis', False):
-                # Full document analysis
-                result = document_processor.process_text(text, title)
-            else:
-                # Simple sentiment analysis
-                result = sentiment_analyzer.analyze_text(text, method)
-            
-            return jsonify({
-                'status': 'ok',
-                'result': result
-            })
+        # Query the RAG system
+        result = rag.query(
+            query=query,
+            n_results=n_results,
+            paper_ids=paper_ids
+        )
         
-        else:
-            return jsonify({
-                'status': 'error',
-                'error': 'Either topic, text, or file_path must be provided'
-            }), 400
+        return jsonify({
+            'status': 'ok',
+            'result': result
+        })
     
     except Exception as e:
-        logger.error(f"Error analyzing content: {e}")
+        logger.error(f"Error processing query: {e}")
         return jsonify({
             'status': 'error',
             'error': str(e)
         }), 500
 
 @app.route('/upload', methods=['POST'])
-def upload_file():
-    """API endpoint to upload and analyze a file"""
+def upload_paper():
+    """API endpoint to upload and ingest a paper into RAG system"""
     try:
         # Check if file part exists
         if 'file' not in request.files:
@@ -234,7 +176,7 @@ def upload_file():
         if not allowed_file(file.filename):
             return jsonify({
                 'status': 'error',
-                'error': f'File type not allowed. Allowed types: {", ".join(ALLOWED_EXTENSIONS)}'
+                'error': f'Only PDF files are allowed for academic papers'
             }), 400
         
         # Save file
@@ -246,15 +188,119 @@ def upload_file():
         file.save(file_path)
         logger.info(f"File saved: {file_path}")
         
-        # Process file
-        result = document_processor.process_file(file_path)
+        # Process file with GROBID
+        paper_data = document_processor.process_file_for_rag(file_path)
         
-        # Add file info to result
-        result['file_info'] = {
-            'original_filename': filename,
-            'saved_filename': filename_with_timestamp,
-            'timestamp': timestamp
-        }
+        if 'error' in paper_data:
+            return jsonify({
+                'status': 'error',
+                'error': paper_data['error']
+            }), 400
+        
+        # Get RAG engine
+        rag = get_rag_engine()
+        
+        # Ingest paper into RAG system
+        ingest_result = rag.ingest_paper(paper_data)
+        
+        if not ingest_result.get('success'):
+            return jsonify({
+                'status': 'error',
+                'error': ingest_result.get('error', 'Failed to ingest paper')
+            }), 500
+        
+        return jsonify({
+            'status': 'ok',
+            'result': {
+                'paper_id': ingest_result['paper_id'],
+                'title': ingest_result['title'],
+                'chunks_processed': ingest_result['chunks_processed'],
+                'sections_processed': ingest_result['sections_processed'],
+                'filename': filename,
+                'upload_date': datetime.now().isoformat()
+            }
+        })
+    
+    except Exception as e:
+        logger.error(f"Error uploading file: {e}")
+        return jsonify({
+            'status': 'error',
+            'error': str(e)
+        }), 500
+
+@app.route('/papers', methods=['GET'])
+def list_papers():
+    """API endpoint to list all uploaded papers"""
+    try:
+        rag = get_rag_engine()
+        papers = rag.list_papers()
+        
+        return jsonify({
+            'status': 'ok',
+            'papers': papers,
+            'total': len(papers)
+        })
+    
+    except Exception as e:
+        logger.error(f"Error listing papers: {e}")
+        return jsonify({
+            'status': 'error',
+            'error': str(e)
+        }), 500
+
+@app.route('/papers/<paper_id>', methods=['DELETE'])
+def delete_paper(paper_id):
+    """API endpoint to delete a paper"""
+    try:
+        rag = get_rag_engine()
+        success = rag.delete_paper(paper_id)
+        
+        if success:
+            return jsonify({
+                'status': 'ok',
+                'message': f'Paper {paper_id} deleted successfully'
+            })
+        else:
+            return jsonify({
+                'status': 'error',
+                'error': 'Paper not found or could not be deleted'
+            }), 404
+    
+    except Exception as e:
+        logger.error(f"Error deleting paper: {e}")
+        return jsonify({
+            'status': 'error',
+            'error': str(e)
+        }), 500
+
+@app.route('/compare', methods=['POST'])
+def compare_papers():
+    """API endpoint to compare multiple papers"""
+    try:
+        data = request.get_json()
+        
+        if not data or 'paper_ids' not in data:
+            return jsonify({
+                'status': 'error',
+                'error': 'No paper IDs provided'
+            }), 400
+        
+        paper_ids = data.get('paper_ids')
+        comparison_aspects = data.get('aspects', ['methodology', 'results', 'conclusions', 'limitations'])
+        
+        if not isinstance(paper_ids, list) or len(paper_ids) < 2:
+            return jsonify({
+                'status': 'error',
+                'error': 'At least 2 paper IDs required for comparison'
+            }), 400
+        
+        logger.info(f"Comparing papers: {paper_ids}")
+        
+        rag = get_rag_engine()
+        result = rag.compare_papers(
+            paper_ids=paper_ids,
+            comparison_aspects=comparison_aspects
+        )
         
         return jsonify({
             'status': 'ok',
@@ -262,7 +308,7 @@ def upload_file():
         })
     
     except Exception as e:
-        logger.error(f"Error uploading file: {e}")
+        logger.error(f"Error comparing papers: {e}")
         return jsonify({
             'status': 'error',
             'error': str(e)
@@ -279,53 +325,6 @@ def get_file(filename):
             'status': 'error',
             'error': str(e)
         }), 404
-
-@app.route('/analyze_topic', methods=['POST'])
-def analyze_topic():
-    """API endpoint to analyze topic of text"""
-    try:
-        # Get request data
-        data = request.get_json()
-        
-        if not data or 'text' not in data:
-            return jsonify({
-                'status': 'error',
-                'error': 'No text provided'
-            }), 400
-        
-        text = data.get('text', '')
-        top_n = data.get('top_n', 10)
-        
-        if not text:
-            return jsonify({
-                'status': 'error',
-                'error': 'Empty text provided'
-            }), 400
-        
-        # Extract keywords
-        keywords = text_processor.extract_keywords(text, top_n=top_n)
-        
-        # Analyze text structure
-        structure = text_processor.analyze_text_structure(text)
-        
-        # Create summary
-        summary = text_processor.summarize_text(text, num_sentences=3)
-        
-        return jsonify({
-            'status': 'ok',
-            'result': {
-                'keywords': [{'word': word, 'count': count} for word, count in keywords],
-                'structure': structure,
-                'summary': summary
-            }
-        })
-    
-    except Exception as e:
-        logger.error(f"Error analyzing topic: {e}")
-        return jsonify({
-            'status': 'error',
-            'error': str(e)
-        }), 500
 
 @app.errorhandler(413)
 def request_entity_too_large(error):
