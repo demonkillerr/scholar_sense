@@ -61,7 +61,7 @@ class GrobidClient:
         try:
             with open(pdf_path, 'rb') as pdf_file:
                 files = {'input': (os.path.basename(pdf_path), pdf_file, 'application/pdf')}
-                response = requests.post(url, files=files, timeout=30)
+                response = requests.post(url, files=files, timeout=120)
             
             if response.status_code != 200:
                 logger.error(f"Processing failed: {response.status_code}")

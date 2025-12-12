@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-const API_URL = 'http://localhost:5000';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || process.env.API_URL || 'http://backend:5000';
 
 export async function POST(request: Request) {
   const formData = await request.formData();
