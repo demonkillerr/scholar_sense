@@ -3,18 +3,17 @@
 
 """
 Document Processing Module
-Processes documents using GROBID and extracts structured information for RAG
+Processes documents using GROBID and extracts structured information
 """
 
 import os
 import json
 import logging
-import hashlib
+import tempfile
 from pathlib import Path
-from datetime import datetime
-from typing import Dict, Any, List
-
 from grobid_client import GrobidClient
+from text_processor import TextProcessor
+from sentiment_analyzer import SentimentAnalyzer
 
 # Get logger for this module
 logger = logging.getLogger(__name__)
@@ -31,8 +30,10 @@ class DocumentProcessor:
         """
         # Get GROBID URL from environment variable or use provided value or default
         self.grobid_url = grobid_url or os.environ.get("GROBID_URL", "http://localhost:8070")
-        logger.info(f"Using GROBID URL: {self.grobid_url}")
+        logger.warning(f"Using GROBID URL: {self.grobid_url}")
         self.grobid_client = GrobidClient(self.grobid_url)
+        self.text_processor = TextProcessor()
+        self.sentiment_analyzer = SentimentAnalyzer()
         self.upload_dir = os.environ.get("UPLOAD_DIR", "uploads")
         
         # Create upload directory if it doesn't exist
@@ -64,15 +65,15 @@ class DocumentProcessor:
         
         return services
     
-    def process_file_for_rag(self, file_path: str) -> Dict[str, Any]:
+    def process_file(self, file_path):
         """
-        Process a document file for RAG ingestion
+        Process a document file
         
         Parameters:
             file_path: Path to the document file
         
         Returns:
-            Dictionary with structured paper data ready for RAG ingestion
+            Dictionary with extracted document information
         """
         file_path = Path(file_path)
         
@@ -80,24 +81,28 @@ class DocumentProcessor:
             logger.error(f"File not found: {file_path}")
             return {"error": "File not found"}
         
-        # Only support PDF files for academic papers
+        # Process based on file type
         if file_path.suffix.lower() == '.pdf':
-            return self._process_pdf_for_rag(file_path)
+            return self._process_pdf(file_path)
+        elif file_path.suffix.lower() in ['.txt', '.text']:
+            return self._process_text_file(file_path)
+        elif file_path.suffix.lower() in ['.json']:
+            return self._process_json_file(file_path)
         else:
             logger.error(f"Unsupported file type: {file_path.suffix}")
-            return {"error": f"Only PDF files are supported for academic papers"}
+            return {"error": f"Unsupported file type: {file_path.suffix}"}
     
-    def _process_pdf_for_rag(self, file_path: Path) -> Dict[str, Any]:
+    def _process_pdf(self, file_path):
         """
-        Process a PDF document using GROBID for RAG ingestion
+        Process a PDF document using GROBID
         
         Parameters:
             file_path: Path to the PDF file
         
         Returns:
-            Dictionary with structured paper data ready for RAG
+            Dictionary with extracted document information
         """
-        logger.info(f"Processing PDF file for RAG: {file_path}")
+        logger.info(f"Processing PDF file: {file_path}")
         
         try:
             # Extract text using GROBID
@@ -106,99 +111,78 @@ class DocumentProcessor:
             if not grobid_result:
                 return {"error": "Failed to process PDF with GROBID"}
             
-            # Generate paper ID from filename and timestamp
-            paper_id = self._generate_paper_id(file_path.name)
+            # Extract document parts
+            document_data = self._extract_document_parts(grobid_result)
             
-            # Extract structured data
-            paper_data = {
-                'paper_id': paper_id,
-                'filename': file_path.name,
-                'file_size': file_path.stat().st_size,
-                'upload_date': datetime.now().isoformat(),
-                'title': grobid_result.get('title', 'Unknown'),
-                'authors': grobid_result.get('authors', ''),
-                'year': self._extract_year(grobid_result),
-                'abstract': grobid_result.get('abstract', ''),
-                'sections': self._extract_sections(grobid_result),
-                'references': grobid_result.get('references', [])
+            # Analyze document sentiment
+            sentiment_result = self.sentiment_analyzer.analyze_document(document_data)
+            
+            # Extract keywords
+            if document_data.get('full_text'):
+                keywords = self.text_processor.extract_keywords(document_data['full_text'], top_n=10)
+                document_data['keywords'] = [{"word": word, "count": count} for word, count in keywords]
+            
+            # Combine results
+            result = {
+                "document": document_data,
+                "sentiment": sentiment_result,
+                "file_info": {
+                    "filename": file_path.name,
+                    "file_type": "pdf",
+                    "file_size": file_path.stat().st_size
+                }
             }
             
-            logger.info(f"Extracted paper: {paper_data['title']}")
-            logger.info(f"Found {len(paper_data['sections'])} sections")
-            
-            return paper_data
+            return result
             
         except Exception as e:
             logger.error(f"Error processing PDF: {e}")
             return {"error": f"Error processing PDF: {str(e)}"}
     
-    def _generate_paper_id(self, filename: str) -> str:
+    def _extract_document_parts(self, grobid_result):
         """
-        Generate unique paper ID from filename and timestamp
-        
-        Parameters:
-            filename: Original filename
-        
-        Returns:
-            Unique paper ID
-        """
-        timestamp = datetime.now().isoformat()
-        content = f"{filename}_{timestamp}"
-        return hashlib.md5(content.encode()).hexdigest()
-    
-    def _extract_year(self, grobid_result: Dict[str, Any]) -> str:
-        """
-        Extract publication year from GROBID result
+        Extract document parts from GROBID result
         
         Parameters:
             grobid_result: GROBID processing result
         
         Returns:
-            Year string or empty string
+            Dictionary with document parts
         """
-        # Try to extract year from various fields
-        # Could be in title, metadata, or references
-        # This is a simplified version
-        return grobid_result.get('year', '')
-    
-    def _extract_sections(self, grobid_result: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """
-        Extract sections from GROBID result
+        document_data = {}
         
-        Parameters:
-            grobid_result: GROBID processing result
+        # Extract title
+        if grobid_result.get('title'):
+            document_data['title'] = grobid_result['title']
         
-        Returns:
-            List of sections with name, text, and page info
-        """
-        sections = []
-        
-        # Add abstract as first section
+        # Extract abstract
         if grobid_result.get('abstract'):
-            sections.append({
-                'name': 'Abstract',
-                'text': grobid_result['abstract'],
-                'page': 1
-            })
+            document_data['abstract'] = grobid_result['abstract']
         
-        # Add body sections
-        if grobid_result.get('sections'):
-            for section in grobid_result['sections']:
-                if section.get('text'):
-                    sections.append({
-                        'name': section.get('heading', 'Body'),
-                        'text': section.get('text', ''),
-                        'page': section.get('page', 'N/A')
-                    })
-        elif grobid_result.get('body_text'):
-            # If no sections, use entire body as one section
-            sections.append({
-                'name': 'Body',
-                'text': grobid_result['body_text'],
-                'page': 'N/A'
-            })
+        # Extract authors
+        if grobid_result.get('authors'):
+            document_data['authors'] = grobid_result['authors']
         
-        return sections
+        # Extract body text
+        if grobid_result.get('body_text'):
+            document_data['body_text'] = grobid_result['body_text']
+        
+        # Extract references
+        if grobid_result.get('references'):
+            document_data['references'] = grobid_result['references']
+        
+        # Combine all text for full-text analysis
+        full_text_parts = []
+        if document_data.get('title'):
+            full_text_parts.append(document_data['title'])
+        if document_data.get('abstract'):
+            full_text_parts.append(document_data['abstract'])
+        if document_data.get('body_text'):
+            full_text_parts.append(document_data['body_text'])
+        
+        document_data['full_text'] = ' '.join(full_text_parts)
+        
+        return document_data
     
     def _process_text_file(self, file_path):
         """
