@@ -1,7 +1,0 @@
-.env
-.env.example
-/uploads
-/testing
-/__pycache__
-/logs
-/chroma_db

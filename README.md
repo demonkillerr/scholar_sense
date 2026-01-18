@@ -1,90 +1,227 @@
-# Sentiment Analysis Project
+# Academic RAG Application
 
-## Project Overview
-This project provides a comprehensive sentiment analysis solution with a modern web interface for analyzing PDF documents. The system can determine sentiment towards specific topics in uploaded documents and extract relevant keywords and sentences.
+A full-stack Retrieval-Augmented Generation (RAG) application for sentiment analysis of academic research papers.
 
-<img src="app.png">
+## Features
 
-## Read our wiki
-- [Design](https://git.ecdf.ed.ac.uk/psd2425/Rose-Campbell/sentiment-analysis/-/wikis/Design)
-- [Planning](https://git.ecdf.ed.ac.uk/psd2425/Rose-Campbell/sentiment-analysis/-/wikis/Planning)
-- [Implementation](https://git.ecdf.ed.ac.uk/psd2425/Rose-Campbell/sentiment-analysis/-/wikis/Implementation)
+- 📄 **PDF Upload**: Upload academic research papers in PDF format
+- 🔍 **Sentiment Analysis**: Analyze paper sentiment towards specific keywords
+- 📚 **Citation Support**: Extract and display citations with page references
+- 💬 **Interactive Chat**: Query-based interface for analysis
+- 🎨 **Modern UI**: Next.js with Tailwind CSS
 
-## System Architecture
-The project is built as a monorepo using Turborepo to manage multiple services:
+## Tech Stack
 
-1. **Frontend**: Next.js application that provides the user interface
-2. **Backend**: Flask-based API service that performs the sentiment analysis
+### Backend
+- **FastAPI**: High-performance Python web framework
+- **LangChain**: RAG pipeline orchestration
+- **ChromaDB**: Vector database for embeddings
+- **Google Gemini**: LLM for analysis
+- **PyMuPDF & pdfplumber**: PDF processing
 
-### Architecture Diagram
+### Frontend
+- **Next.js 14**: React framework with App Router
+- **Tailwind CSS**: Utility-first styling
+- **TypeScript**: Type-safe development
+- **Axios**: HTTP client
+
+## Project Structure
+
 ```
-┌─────────────────┐         ┌─────────────────┐         ┌─────────────────┐
-│                 │         │                 │         │                 │
-│    Frontend     │ ──────► │     Backend     │ ──────► │  GROBID Service │
-│   (Next.js)     │         │    (Flask)      │         │  (PDF Parser)   │
-│                 │         │                 │         │                 │
-└─────────────────┘         └─────────────────┘         └─────────────────┘
-
+windows-build/
+├── backend/
+│   ├── main.py                 # FastAPI application
+│   ├── config.py               # Configuration settings
+│   ├── requirements.txt        # Python dependencies
+│   ├── .env                    # Environment variables
+│   ├── routers/
+│   │   ├── upload.py          # PDF upload endpoints
+│   │   └── chat.py            # Chat/analysis endpoints
+│   ├── services/
+│   │   ├── pdf_processor.py   # PDF extraction and chunking
+│   │   └── rag_service.py     # RAG pipeline and LLM
+│   ├── uploads/               # Uploaded PDFs (auto-created)
+│   └── chroma_db/             # Vector database (auto-created)
+│
+└── frontend/
+    ├── app/
+    │   ├── layout.tsx         # Root layout
+    │   ├── page.tsx           # Main page with tabs
+    │   └── globals.css        # Global styles
+    ├── components/
+    │   ├── UploadTab.tsx      # Upload interface
+    │   └── ChatTab.tsx        # Chat interface
+    ├── package.json
+    ├── tsconfig.json
+    ├── tailwind.config.js
+    └── next.config.js
 ```
 
-## Key Features
-- Upload and analyze PDF documents
-- Perform topic-focused sentiment analysis
-- Extract relevant sentences and keywords
-- Visual representation of sentiment results
-
-## Getting Started
+## Setup Instructions
 
 ### Prerequisites
-- Node.js 18.0+
-- Python 3.8+
-- Docker (for GROBID service)
+- Python 3.9+
+- Node.js 18+
+- Google API Key (for Gemini)
 
-### Setup Steps
+### Backend Setup
 
-1. **Clone the repository**
-```bash
-git clone https://git.ecdf.ed.ac.uk/psd2425/Rose-Campbell/sentiment-analysis.git
-cd sentiment-analysis
+1. Navigate to backend directory:
+```powershell
+cd backend
 ```
 
-2. **Start the GROBID service** (required for PDF processing)
-```bash
-cd apps/backend/grobid_deployment && chmod +x deploy-grobid.sh
-./deploy-grobid.sh
+2. Create a virtual environment:
+```powershell
+python -m venv venv
+.\venv\Scripts\Activate
 ```
 
-3. **Set up the backend**
-```bash
-cd apps/backend && chmod +x start_conda.sh
-./start_conda.sh
+3. Install dependencies:
+```powershell
+pip install -r requirements.txt
 ```
 
-4. **Set up the frontend**
-```bash
-cd apps/frontend
+4. The `.env` file is already configured with your API key. Verify settings:
+```
+GOOGLE_API_KEY=AIzaSyCSxhnZqtSYz74xzxD4FnnoiIfbgfNx3S4
+CHROMA_DB_PATH=./chroma_db
+UPLOAD_DIR=./uploads
+```
+
+5. Start the FastAPI server:
+```powershell
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
+```
+
+The backend will be available at `http://localhost:8000`
+- API docs: `http://localhost:8000/docs`
+
+### Frontend Setup
+
+1. Open a new terminal and navigate to frontend directory:
+```powershell
+cd frontend
+```
+
+2. Install dependencies:
+```powershell
 npm install
+```
+
+3. The `.env.local` file is already configured. Verify:
+```
+NEXT_PUBLIC_API_URL=http://localhost:8000
+```
+
+4. Start the development server:
+```powershell
 npm run dev
 ```
 
-5. **Access the application**
-- Frontend: http://localhost:3000
-- Backend API: http://localhost:5000
-- GROBID Service: http://localhost:8070
+The frontend will be available at `http://localhost:3000`
 
-## Directory Structure
-```
-sentiment-analysis/
-├── apps/
-│   ├── frontend/               # Next.js frontend application
-│   └── backend/                # Flask backend service
-├── packages/                   # Shared packages and utilities
-├── README.md                   # This file
-└── package.json                # Root package.json for Turborepo
-```
+## Usage
 
-## Detailed Documentation
-For more detailed information about each component:
+1. **Upload a PDF**:
+   - Open `http://localhost:3000`
+   - Go to "Upload Document" tab
+   - Drag and drop or browse for a PDF research paper
+   - Click "Upload and Process"
 
-- [Frontend Documentation](apps/frontend/README.md)
-- [Backend Documentation](apps/backend/README.md)
+2. **Analyze Sentiment**:
+   - Switch to "Sentiment Analysis" tab
+   - Enter a keyword (e.g., "machine learning", "climate change")
+   - Optionally select a specific document
+   - Click "Analyze Sentiment"
+
+3. **View Results**:
+   - Overall sentiment classification
+   - Detailed analysis summary
+   - Supporting evidence with page numbers and citations
+
+## API Endpoints
+
+### `POST /api/upload`
+Upload and process a PDF document
+- **Request**: `multipart/form-data` with PDF file
+- **Response**: Processing status and metadata
+
+### `POST /api/chat`
+Analyze sentiment for a keyword
+- **Request**: `{ "keyword": "string", "document_name": "string" }`
+- **Response**: Sentiment analysis with citations
+
+### `GET /api/documents`
+List all uploaded documents
+- **Response**: Array of document filenames
+
+## How It Works
+
+1. **PDF Processing**:
+   - Extracts text from PDF with page numbers
+   - Identifies sections (Abstract, Introduction, etc.)
+   - Splits into chunks with metadata
+
+2. **Embedding & Storage**:
+   - Generates embeddings using Google's embedding model
+   - Stores in ChromaDB vector database
+   - Preserves citation and location metadata
+
+3. **Sentiment Analysis**:
+   - Retrieves relevant chunks based on keyword
+   - Sends context to Gemini for analysis
+   - Returns sentiment with supporting evidence
+
+4. **Citation Extraction**:
+   - Pattern-based detection of citations: `[1]`, `(Author, Year)`
+   - Links citations to page numbers and sections
+   - Displays in user-friendly format
+
+## Configuration
+
+### Backend (`backend/config.py`)
+- `CHUNK_SIZE`: Text chunk size (default: 1000)
+- `CHUNK_OVERLAP`: Overlap between chunks (default: 200)
+- `TOP_K_RESULTS`: Number of results to retrieve (default: 5)
+
+### Environment Variables
+- `GOOGLE_API_KEY`: Google Gemini API key
+- `CHROMA_DB_PATH`: Vector database location
+- `UPLOAD_DIR`: PDF upload directory
+
+## Troubleshooting
+
+### Backend Issues
+- Ensure all dependencies are installed: `pip install -r requirements.txt`
+- Check if port 8000 is available
+- Verify Google API key is valid
+
+### Frontend Issues
+- Clear node_modules and reinstall: `rm -rf node_modules && npm install`
+- Check if port 3000 is available
+- Ensure backend is running before starting frontend
+
+### PDF Processing
+- Ensure PDFs are text-based (not scanned images)
+- Check file size (large PDFs may take longer to process)
+
+## Future Enhancements
+
+- [ ] Support for multiple document comparison
+- [ ] Advanced citation parsing with bibliography extraction
+- [ ] Export analysis results to PDF/Word
+- [ ] User authentication and document management
+- [ ] Support for other document formats (DOCX, TXT)
+
+## License
+
+MIT
+
+## Credits
+
+Built with:
+- FastAPI, LangChain, ChromaDB
+- Google Gemini API
+- Next.js, Tailwind CSS
+- PyMuPDF, pdfplumber
