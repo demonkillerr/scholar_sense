@@ -142,6 +142,7 @@ export default function ChatTab({ documents }: ChatTabProps) {
           <div className="bg-white rounded-lg border border-gray-200 p-6">
             <h3 className="text-lg font-semibold text-gray-800 mb-3">Analysis Summary</h3>
             <div className="prose prose-sm max-w-none text-gray-700">
+              {/* @ts-ignore */}
               <ReactMarkdown 
                 remarkPlugins={[remarkGfm, remarkMath]}
                 rehypePlugins={[rehypeKatex]}
