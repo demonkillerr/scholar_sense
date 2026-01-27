@@ -1,90 +1,83 @@
-# Sentiment Analysis Project
+# Academic RAG Application
 
-## Project Overview
-This project provides a comprehensive sentiment analysis solution with a modern web interface for analyzing PDF documents. The system can determine sentiment towards specific topics in uploaded documents and extract relevant keywords and sentences.
+A full-stack Retrieval-Augmented Generation (RAG) application for sentiment analysis of academic research papers.
 
-<img src="app.png">
+## Features
 
-## Read our wiki
-- [Design](https://git.ecdf.ed.ac.uk/psd2425/Rose-Campbell/sentiment-analysis/-/wikis/Design)
-- [Planning](https://git.ecdf.ed.ac.uk/psd2425/Rose-Campbell/sentiment-analysis/-/wikis/Planning)
-- [Implementation](https://git.ecdf.ed.ac.uk/psd2425/Rose-Campbell/sentiment-analysis/-/wikis/Implementation)
+- 📄 **PDF Upload**: Upload academic research papers in PDF format
+- 🔍 **Sentiment Analysis**: Analyze paper sentiment towards specific keywords
+- 📚 **Citation Support**: Extract and display citations with page references
+- 💬 **Interactive Chat**: Query-based interface for analysis
+- 🎨 **Modern UI**: Next.js with Tailwind CSS
 
-## System Architecture
-The project is built as a monorepo using Turborepo to manage multiple services:
+## Tech Stack
 
-1. **Frontend**: Next.js application that provides the user interface
-2. **Backend**: Flask-based API service that performs the sentiment analysis
+### Backend
+- **FastAPI**: High-performance Python web framework
+- **LangChain**: RAG pipeline orchestration
+- **ChromaDB**: Vector database for embeddings
+- **Google Gemini**: LLM for analysis
+- **PyMuPDF & pdfplumber**: PDF processing
 
-### Architecture Diagram
+### Frontend
+- **Next.js 14**: React framework with App Router
+- **Tailwind CSS**: Utility-first styling
+- **TypeScript**: Type-safe development
+- **Axios**: HTTP client
+
+## Project Structure
+
 ```
-┌─────────────────┐         ┌─────────────────┐         ┌─────────────────┐
-│                 │         │                 │         │                 │
-│    Frontend     │ ──────► │     Backend     │ ──────► │  GROBID Service │
-│   (Next.js)     │         │    (Flask)      │         │  (PDF Parser)   │
-│                 │         │                 │         │                 │
-└─────────────────┘         └─────────────────┘         └─────────────────┘
-
+windows-build/
+├── backend/
+│   ├── main.py                 # FastAPI application
+│   ├── config.py               # Configuration settings
+│   ├── requirements.txt        # Python dependencies
+│   ├── .env                    # Environment variables
+│   ├── routers/
+│   │   ├── upload.py          # PDF upload endpoints
+│   │   └── chat.py            # Chat/analysis endpoints
+│   ├── services/
+│   │   ├── pdf_processor.py   # PDF extraction and chunking
+│   │   └── rag_service.py     # RAG pipeline and LLM
+│   ├── uploads/               # Uploaded PDFs (auto-created)
+│   └── chroma_db/             # Vector database (auto-created)
+│
+└── frontend/
+    ├── app/
+    │   ├── layout.tsx         # Root layout
+    │   ├── page.tsx           # Main page with tabs
+    │   └── globals.css        # Global styles
+    ├── components/
+    │   ├── UploadTab.tsx      # Upload interface
+    │   └── ChatTab.tsx        # Chat interface
+    ├── package.json
+    ├── tsconfig.json
+    ├── tailwind.config.js
+    └── next.config.js
 ```
 
-## Key Features
-- Upload and analyze PDF documents
-- Perform topic-focused sentiment analysis
-- Extract relevant sentences and keywords
-- Visual representation of sentiment results
-
-## Getting Started
+## Setup Instructions
 
 ### Prerequisites
-- Node.js 18.0+
-- Python 3.8+
-- Docker (for GROBID service)
+- Python 3.9+
+- Node.js 18+
+- Google API Key (for Gemini)
 
-### Setup Steps
+### Backend Setup
 
-1. **Clone the repository**
-```bash
-git clone https://git.ecdf.ed.ac.uk/psd2425/Rose-Campbell/sentiment-analysis.git
-cd sentiment-analysis
+1. Navigate to backend directory:
+```powershell
+cd backend
 ```
 
-2. **Start the GROBID service** (required for PDF processing)
-```bash
-cd apps/backend/grobid_deployment && chmod +x deploy-grobid.sh
-./deploy-grobid.sh
+2. Create a virtual environment:
+```powershell
+python -m venv venv
+.\venv\Scripts\Activate
 ```
 
-3. **Set up the backend**
-```bash
-cd apps/backend && chmod +x start_conda.sh
-./start_conda.sh
+3. Install dependencies:
+```powershell
+pip install -r requirements.txt
 ```
-
-4. **Set up the frontend**
-```bash
-cd apps/frontend
-npm install
-npm run dev
-```
-
-5. **Access the application**
-- Frontend: http://localhost:3000
-- Backend API: http://localhost:5000
-- GROBID Service: http://localhost:8070
-
-## Directory Structure
-```
-sentiment-analysis/
-├── apps/
-│   ├── frontend/               # Next.js frontend application
-│   └── backend/                # Flask backend service
-├── packages/                   # Shared packages and utilities
-├── README.md                   # This file
-└── package.json                # Root package.json for Turborepo
-```
-
-## Detailed Documentation
-For more detailed information about each component:
-
-- [Frontend Documentation](apps/frontend/README.md)
-- [Backend Documentation](apps/backend/README.md)
