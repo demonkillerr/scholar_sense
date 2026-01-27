@@ -1,14 +1,14 @@
-# Academic RAG Application
+# Scholar Sense
 
 A full-stack Retrieval-Augmented Generation (RAG) application for sentiment analysis of academic research papers.
 
 ## Features
 
-- 📄 **PDF Upload**: Upload academic research papers in PDF format
-- 🔍 **Sentiment Analysis**: Analyze paper sentiment towards specific keywords
-- 📚 **Citation Support**: Extract and display citations with page references
-- 💬 **Interactive Chat**: Query-based interface for analysis
-- 🎨 **Modern UI**: Next.js with Tailwind CSS
+- **PDF Upload**: Upload academic research papers in PDF format
+- **Sentiment Analysis**: Analyze paper sentiment towards specific keywords
+- **Citation Support**: Extract and display citations with page references
+- **Interactive Chat**: Query-based interface for analysis
+- **Modern UI**: Next.js with Tailwind CSS
 
 ## Tech Stack
 
